@@ -36,13 +36,15 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // the bit times, so don't rely on it too much at high baud rates
 #define _DEBUG 0
 #define _DEBUG_PIN1 11
-#define _DEBUG_PIN2 13
+#define _DEBUG_PIN2 12
 //
 // Includes
 //
 
 #include "Arduino.h"
 #include "BMSerial.h"
+
+
 
 #ifndef USB_PID_DUE 
 	#include <avr/interrupt.h>
@@ -104,8 +106,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
   #define _RX3 7
   #undef _TX0
   #undef _RX0
-  #define _TX0 255
-  #define _RX0 255
+//  #define _TX0 255
+//  #define _RX0 255
 #endif
 
 #ifndef USB_PID_DUE 
@@ -325,7 +327,6 @@ void BMSerial::recv()
       else // else clause added to ensure function timing is ~balanced
         d &= noti;
     }
-
     // wait for stop bit, then continue
     for(int wait=0;wait<_rx_delay_stopbit;wait++){
     	if(_inverse_logic ? !rx_pin_read() : rx_pin_read())
@@ -333,7 +334,7 @@ void BMSerial::recv()
 	   tunedDelay(1);
     }
     DebugPulse(_DEBUG_PIN2, 1);
-
+    
     if (_inverse_logic)
       d = ~d;
 
@@ -518,28 +519,46 @@ void BMSerial::setTXRX(uint8_t tx,uint8_t rx)
 
 void BMSerial::begin(long speed)
 {
+    _fhalf_duplex = (_receivePin == _transmitPin);
+#ifdef _TX0 // not defined for Teensy or Arduino Leonardo...
 	if(_receivePin==_RX0 && _transmitPin==_TX0){
-		Serial.begin(speed);
-		return;
+        _port = &Serial;
 	}
+#endif    
 #ifdef _BMSERIAL1
 	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		Serial1.begin(speed);
-		return;
+        _port = &Serial1;
+	}
+	if(_receivePin==_TX1 && _transmitPin==_TX1){
+        // Try to support Half duplex
+        _port = &Serial1;
 	}
 #endif
 #ifdef _BMSERIAL2
 	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		Serial2.begin(speed);
-		return;
+        _port = &Serial2;
+    }    
+	if(_receivePin==_TX2 && _transmitPin==_TX2){
+        // Try to support Half duplex
+        _port = &Serial2;
 	}
 #endif
 #ifdef _BMSERIAL3
 	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		Serial3.begin(speed);
-		return;
+        _port = &Serial3;
+	}
+	if(_receivePin==_TX3 && _transmitPin==_TX3){
+        // Try to support Half duplex
+        Serial.println("BM Serial3 half duplex");
+        _port = &Serial3;
 	}
 #endif
+    if (_port) {
+        _port->begin(speed);
+        if (_fhalf_duplex) {
+            InitHalfDuplex();   // initialize half duplex.
+        }    
+    }    
 	
 #ifndef USB_PID_DUE 
 	_rx_delay_centering = _rx_delay_intrabit = _rx_delay_stopbit = _tx_delay = 0;
@@ -580,28 +599,10 @@ void BMSerial::begin(long speed)
 
 void BMSerial::end()
 {
-	if(_receivePin==_RX0 && _transmitPin==_TX0){
-		Serial.end();
+    if (_port) {
+        _port->end();
 		return;
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		Serial1.end();
-		return;
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		Serial2.end();
-		return;
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		Serial3.end();
-		return;
-	}
-#endif
 	
 #ifndef USB_PID_DUE 
 	if (digitalPinToPCMSK(_receivePin))
@@ -613,48 +614,15 @@ void BMSerial::end()
 // Read data from buffer
 int16_t BMSerial::read(uint32_t timeout)
 {
-	if(_receivePin==_RX0 && _transmitPin==_TX0){
+    if(_port) { // BUGBUG:: can use streams timeouts instead.
 		uint32_t start = micros();
 		// Empty buffer?
-		while(!Serial.available()){
+		while(!_port->available()){
 		   if((micros()-start)>=timeout)
 		      return -1;
 		}
-		return Serial.read();
+		return _port->read();
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		uint32_t start = micros();
-		// Empty buffer?
-		while(!Serial1.available()){
-		   if((micros()-start)>=timeout)
-		      return -1;
-		}
-		return Serial1.read();
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		uint32_t start = micros();
-		// Empty buffer?
-		while(!Serial2.available()){
-		   if((micros()-start)>=timeout)
-		      return -1;
-		}
-		return Serial2.read();
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		uint32_t start = micros();
-		// Empty buffer?
-		while(!Serial3.available()){
-		   if((micros()-start)>=timeout)
-		      return -1;
-		}
-		return Serial3.read();
-	}
-#endif
 	
 #ifndef USB_PID_DUE 
 	if (!is_listening())
@@ -680,24 +648,9 @@ int16_t BMSerial::read(uint32_t timeout)
 
 int BMSerial::available()
 {
-	if(_receivePin==0 && _transmitPin==1){
-		return Serial.available();
+    if (_port) {
+        return _port->available();
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		return Serial1.available();
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		return Serial2.available();
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		return Serial3.available();
-	}
-#endif
 	
 #ifndef USB_PID_DUE 
 	if (!is_listening())
@@ -796,57 +749,24 @@ uint16_t BMSerial::readln(char *data,uint32_t timeout)
 
 int BMSerial::read()
 {
-	if(_receivePin==0 && _transmitPin==1){
-		return Serial.read();
+    if(_port) {
+        return _port->read();
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		return Serial1.read();
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		return Serial2.read();
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		return Serial3.read();
-	}
-#endif
-	
 	return read(0);
 }
 
 size_t BMSerial::write(uint8_t b)
 {
-	if(_receivePin==0 && _transmitPin==1){
-		return Serial.write(b);
+    if (_port) {
+		return _port->write(b);
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		return Serial1.write(b);
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		return Serial2.write(b);
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		return Serial3.write(b);
-	}
-#endif
 	
 #ifndef USB_PID_DUE 
 	if (_tx_delay == 0)
 	  return 0;
 	
-	if(_transmitPin==_receivePin){
-		*_transmitModeRegister|=_transmitBitMask;
-		if (!_inverse_logic)
-			*_transmitPortRegister|=_transmitBitMask;
+	if(_fhalf_duplex){
+        SetHalfDuplexDirection(true);    // Act like the old way...
 	}
 	
 	uint8_t oldSREG = SREG;
@@ -886,10 +806,8 @@ size_t BMSerial::write(uint8_t b)
 	  tx_pin_write(HIGH); // restore pin to natural state
 	}
 	
-	if(_transmitPin==_receivePin){
-		*_transmitModeRegister&=~_transmitBitMask;
-		if (!_inverse_logic)
-			*_transmitPortRegister|=_transmitBitMask;
+	if(_fhalf_duplex){
+        SetHalfDuplexDirection(false);    // Act like the old way...
 	}
 	
 	SREG = oldSREG; // turn interrupts back on
@@ -904,29 +822,11 @@ size_t BMSerial::write(uint8_t b)
 
 void BMSerial::flush()
 {
-	if(_receivePin==0 && _transmitPin==1){
-		Serial.flush();
+    if(_port) {
+		_port->flush();
 		return;
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		Serial1.flush();
-		return;
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		Serial2.flush();
-		return;
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		Serial3.flush();
-		return;
-	}
-#endif
-	
+#if 0 // Arduino 1.0 flush implies wait until output is done...	
 #ifndef USB_PID_DUE 
 	if (!is_listening())
 		return;
@@ -936,29 +836,14 @@ void BMSerial::flush()
 	_receive_buffer_head = _receive_buffer_tail = 0;
 	SREG = oldSREG;
 #endif
-
+#endif
 }
 
 int BMSerial::peek()
 {
-	if(_receivePin==0 && _transmitPin==1){
-		return Serial.peek();
+    if(_port) {
+		return _port->peek();
 	}
-#ifdef _BMSERIAL1
-	if(_receivePin==_RX1 && _transmitPin==_TX1){
-		return Serial1.peek();
-	}
-#endif
-#ifdef _BMSERIAL2
-	if(_receivePin==_RX2 && _transmitPin==_TX2){
-		return Serial2.peek();
-	}
-#endif
-#ifdef _BMSERIAL3
-	if(_receivePin==_RX3 && _transmitPin==_TX3){
-		return Serial3.peek();
-	}
-#endif
 	
 #ifndef USB_PID_DUE 
 	if (!is_listening())
@@ -973,5 +858,65 @@ int BMSerial::peek()
 #else
 	return -1;
 #endif
+}
 
+void BMSerial::InitHalfDuplex() {
+//  Updates for Teensy...
+#if defined(__MK20DX128__) || defined(__MK20DX256__)
+    
+    // Teensy 3.x - Set half duplex mode
+    if (_port == &Serial1) {
+        UART0_C1 |= UART_C1_LOOPS | UART_C1_RSRC;
+        CORE_PIN1_CONFIG |= PORT_PCR_PE | PORT_PCR_PS; // pullup on output pin
+    } else if (_port == &Serial2) {
+        UART1_C1 |= UART_C1_LOOPS | UART_C1_RSRC;
+        CORE_PIN10_CONFIG |= PORT_PCR_PE | PORT_PCR_PS; // pullup on output pin
+    } else if (_port == &Serial3) {
+        UART2_C1 |= UART_C1_LOOPS | UART_C1_RSRC;
+        CORE_PIN8_CONFIG |= PORT_PCR_PE | PORT_PCR_PS; // pullup on output pin
+
+    }    
+    SetHalfDuplexDirection(true);  // set initially to write as some write only devices.
+#endif
+}
+
+
+// Fill in some stuff for Teensy and maybe Due... 
+void BMSerial::SetHalfDuplexDirection(bool fWrite)
+{
+#if defined(__MK20DX128__) || defined(__MK20DX256__)
+#define UART_C3_TXDIR			(uint8_t)0x20			// Transmitter Interrupt or DMA Transfer Enable.
+	uint8_t c;
+    if (_port) {
+        if (fWrite) {
+    // Teensy 3.1
+            if (_port == &Serial1) {
+                UART0_C3 |= UART_C3_TXDIR;
+            } else if (_port == &Serial2) {
+                UART1_C3 |= UART_C3_TXDIR;
+            } else if (_port == &Serial3) {
+                UART2_C3 |= UART_C3_TXDIR;
+            }    
+        } else {
+            if (_port == &Serial1) {
+                UART0_C3 &= ~UART_C3_TXDIR;
+            } else if (_port == &Serial2) {
+                UART1_C3 &= ~UART_C3_TXDIR;
+            } else if (_port == &Serial3) {
+                UART2_C3 &= ~UART_C3_TXDIR;
+            }    
+        }
+    }
+#endif    
+#ifndef USB_PID_DUE 
+    if(fWrite) {
+		*_transmitModeRegister|=_transmitBitMask;
+		if (!_inverse_logic)
+			*_transmitPortRegister|=_transmitBitMask;
+    } else {
+ 		*_transmitModeRegister&=~_transmitBitMask;
+		if (!_inverse_logic)
+			*_transmitPortRegister|=_transmitBitMask;
+   }
+#endif
 }

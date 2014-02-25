@@ -73,12 +73,17 @@ private:
 	
 	uint16_t _buffer_overflow:1;
 	uint16_t _inverse_logic:1;
+    uint16_t _fhalf_duplex:1;
+    uint16_t _half_duplex_direction:1;
 	
 	// static data
 	static char _receive_buffer[_SS_MAX_RX_BUFF]; 
 	static volatile uint8_t _receive_buffer_tail;
 	static volatile uint8_t _receive_buffer_head;
 	static BMSerial *active_object;
+    
+    // Hardware stream
+    HardwareSerial  *_port;     // Pointer to hardware serial port (if appropriate) we are directing to.
 
 	// private methods
 #ifndef USB_PID_DUE 
@@ -90,6 +95,7 @@ private:
 #endif
 
 	void setTXRX(uint8_t transmitPin,uint8_t receivePin);
+    void InitHalfDuplex();
 
 	int8_t bintoint(uint8_t c);
 	int8_t dectoint(uint8_t c);
@@ -123,6 +129,8 @@ public:
 	uint32_t readdec(uint32_t timeout,bool ignoreleading=true);
 	uint32_t readhex(uint32_t timeout,bool ignoreleading=true);
 	uint32_t readbin(uint32_t timeout,bool ignoreleading=true);
+    
+    void SetHalfDuplexDirection(bool fWrite);   // added by Kurt
 	
 };
 
